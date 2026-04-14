@@ -3,10 +3,14 @@
 from .base import BaseParser
 from .warren import WarrenParserV2
 from .xp import XPParser
+from .stubs import ItauParser, BradescoParser, BTGParser
 
 PARSER_REGISTRY: dict[str, type[BaseParser]] = {
     "Warren": WarrenParserV2,
     "XP": XPParser,
+    "Itau": ItauParser,
+    "Bradesco": BradescoParser,
+    "BTG": BTGParser,
 }
 
 

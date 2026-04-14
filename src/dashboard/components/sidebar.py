@@ -213,6 +213,13 @@ def render_sidebar():
                             try:
                                 parser = get_parser(broker)
                                 parsed = parser.parse(tmp_path)
+                            except NotImplementedError as e:
+                                st.warning(str(e))
+                                try:
+                                    os.unlink(tmp_path)
+                                except OSError:
+                                    pass
+                                st.stop()
                             finally:
                                 try:
                                     os.unlink(tmp_path)
