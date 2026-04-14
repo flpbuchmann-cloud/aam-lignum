@@ -22,6 +22,7 @@ from src.dashboard.components.sidebar import render_sidebar
 from src.dashboard.pages.import_page import render_import
 from src.dashboard.pages.aa_page import render_aa
 from src.dashboard.pages.rf_carrego_page import render_rf
+from src.dashboard.pages.consulta_page import render_consulta
 
 
 def init_session_state():
@@ -58,6 +59,7 @@ def main():
         st.Page(render_import, title="Importar", icon=":material/upload_file:"),
         st.Page(render_aa, title="Asset Allocation", icon=":material/pie_chart:"),
         st.Page(render_rf, title="RF Carrego", icon=":material/account_balance:"),
+        st.Page(render_consulta, title="Consulta", icon=":material/search:"),
     ]
 
     nav = st.navigation(pages)
