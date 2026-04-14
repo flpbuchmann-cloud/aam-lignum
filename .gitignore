@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Credentials - NEVER commit these
+config/credentials.json
+.streamlit/secrets.toml
+*.json
+!package.json
+!package-lock.json
+
+# Data (client-specific, do not commit)
+data/clients.db
+data/clients.db-wal
+data/clients.db-shm
+data/cache/
+data/uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
