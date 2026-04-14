@@ -180,62 +180,68 @@ def render_sidebar():
                 key="ref_date",
             )
 
-            uploaded_file = st.file_uploader(
-                "Selecione o PDF mensal",
+            uploaded_files = st.file_uploader(
+                "Selecione um ou mais PDFs",
                 type=["pdf"],
-                help="Relatorio mensal de investimentos da corretora",
+                accept_multiple_files=True,
+                help="Voce pode selecionar varios PDFs de uma vez (todos da mesma corretora)",
             )
 
-            if uploaded_file is not None:
+            if uploaded_files:
                 client_id = st.session_state.client_id
+                n_files = len(uploaded_files)
+                btn_label = f"Processar {n_files} PDF" + ("s" if n_files > 1 else "")
 
-                if st.button("Processar PDF", type="primary", use_container_width=True):
+                if st.button(btn_label, type="primary", use_container_width=True):
                     with st.spinner("Atualizando cadastro..."):
                         refresh_registry()
 
-                    with st.spinner("Extraindo ativos do PDF..."):
-                        # Save to temp file for parsing (pdfplumber/fitz need a path)
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(
-                            suffix=".pdf", delete=False
-                        ) as tmp:
-                            tmp.write(uploaded_file.getvalue())
-                            tmp_path = tmp.name
+                    all_results = []
+                    last_upload_id = None
+                    engine = get_engine()
 
-                        try:
-                            parser = get_parser(broker)
-                            parsed = parser.parse(tmp_path)
-                        finally:
-                            # Delete temp file after parsing
-                            import os
+                    import tempfile, os
+
+                    for i, uploaded_file in enumerate(uploaded_files, 1):
+                        with st.spinner(f"Processando PDF {i}/{n_files}: {uploaded_file.name}"):
+                            with tempfile.NamedTemporaryFile(
+                                suffix=".pdf", delete=False
+                            ) as tmp:
+                                tmp.write(uploaded_file.getvalue())
+                                tmp_path = tmp.name
+
                             try:
-                                os.unlink(tmp_path)
-                            except OSError:
-                                pass
+                                parser = get_parser(broker)
+                                parsed = parser.parse(tmp_path)
+                            finally:
+                                try:
+                                    os.unlink(tmp_path)
+                                except OSError:
+                                    pass
 
-                        # Match
-                        engine = get_engine()
-                        results = engine.match(parsed)
+                            results = engine.match(parsed)
 
-                        # Save to DB
-                        upload_id = db.create_upload(
-                            client_id, uploaded_file.name, broker, ref_date
-                        )
-                        pos_rows = []
-                        for r in results:
-                            pos_rows.append({
-                                "pdf_name": r.pdf_name,
-                                "value": r.value,
-                                "source": r.source,
-                                "status": r.status,
-                                "registry_nome": r.registry_asset.get("nome") if r.registry_asset else None,
-                            })
-                        db.save_positions(client_id, upload_id, pos_rows)
+                            upload_id = db.create_upload(
+                                client_id, uploaded_file.name, broker, ref_date
+                            )
+                            pos_rows = []
+                            for r in results:
+                                pos_rows.append({
+                                    "pdf_name": r.pdf_name,
+                                    "value": r.value,
+                                    "source": r.source,
+                                    "status": r.status,
+                                    "registry_nome": r.registry_asset.get("nome") if r.registry_asset else None,
+                                })
+                            db.save_positions(client_id, upload_id, pos_rows)
 
-                        # Store last upload results for review
-                        st.session_state.last_upload_results = results
-                        st.session_state.last_upload_id = upload_id
-                        st.rerun()
+                            all_results.extend(results)
+                            last_upload_id = upload_id
+
+                    st.session_state.last_upload_results = all_results
+                    st.session_state.last_upload_id = last_upload_id
+                    st.success(f"{n_files} PDF(s) processado(s)!")
+                    st.rerun()
 
             st.divider()
 
