@@ -56,8 +56,9 @@ def main():
     init_session_state()
 
     # Multi-page navigation
+    home = st.Page(render_home, title="Inicio", icon=":material/home:", default=True)
     pages = [
-        st.Page(render_home, title="Inicio", icon=":material/home:", default=True),
+        home,
         st.Page(render_import, title="Importar", icon=":material/upload_file:"),
         st.Page(render_aa, title="Asset Allocation", icon=":material/pie_chart:"),
         st.Page(render_rf, title="RF Carrego", icon=":material/account_balance:"),
@@ -66,6 +67,13 @@ def main():
 
     nav = st.navigation(pages)
     render_sidebar()
+
+    # Force home page on every new session (refresh / fresh URL)
+    if not st.session_state.get("_initial_home_redirect_done"):
+        st.session_state["_initial_home_redirect_done"] = True
+        if nav.url_path != home.url_path:
+            st.switch_page(home)
+
     nav.run()
 
 
