@@ -45,7 +45,7 @@ class SheetsClient:
         # Try Streamlit secrets first (for cloud deployment)
         try:
             import streamlit as st
-            if "gcp_service_account" in st.secrets:
+            if hasattr(st, "secrets") and "gcp_service_account" in st.secrets:
                 creds_dict = dict(st.secrets["gcp_service_account"])
                 creds = Credentials.from_service_account_info(
                     creds_dict, scopes=GSHEETS_SCOPES
@@ -53,9 +53,11 @@ class SheetsClient:
                 self._gc = gspread.authorize(creds)
                 self._authenticated = True
                 return True
-        except Exception as e:
-            # Secrets not available or invalid - fall through to file-based auth
+        except ImportError:
             pass
+        except Exception as e:
+            # Log the real error so we can debug (visible in Streamlit Cloud logs)
+            print(f"[SheetsClient] Streamlit secrets auth failed: {type(e).__name__}: {e}")
 
         # Fall back to local credentials.json
         creds_path = Path(GSHEETS_CREDENTIALS_PATH)
