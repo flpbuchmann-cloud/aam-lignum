@@ -242,8 +242,15 @@ def render_aa():
             pie_macro["Label"] = pie_macro.apply(
                 lambda r: f"{r['Macro Classe']} - {r['% Atual']:.2f}%", axis=1
             )
-            fig = px.pie(pie_macro, values="Valor", names="Label", hole=0.4)
-            fig.update_traces(textposition="none")
+            pie_macro["Valor Fmt"] = pie_macro["Valor"].apply(format_brl)
+            fig = px.pie(
+                pie_macro, values="Valor", names="Label", hole=0.4,
+                custom_data=["Valor Fmt", "% Atual"],
+            )
+            fig.update_traces(
+                textposition="none",
+                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+            )
             fig.update_layout(
                 showlegend=True, height=400,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.3),
@@ -257,8 +264,15 @@ def render_aa():
             pie_micro["Label"] = pie_micro.apply(
                 lambda r: f"{r['Micro Classe']} - {r['% Atual']:.2f}%", axis=1
             )
-            fig = px.pie(pie_micro, values="Valor", names="Label", hole=0.4)
-            fig.update_traces(textposition="none")
+            pie_micro["Valor Fmt"] = pie_micro["Valor"].apply(format_brl)
+            fig = px.pie(
+                pie_micro, values="Valor", names="Label", hole=0.4,
+                custom_data=["Valor Fmt", "% Atual"],
+            )
+            fig.update_traces(
+                textposition="none",
+                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+            )
             n_items = len(pie_micro)
             fig.update_layout(
                 showlegend=True,
@@ -292,9 +306,12 @@ def render_aa():
             y="Label",
             orientation="h",
             text="Valor Fmt",
-            hover_data={"% PL": ":.2f"},
+            custom_data=["Valor Fmt", "% PL"],
         )
-        fig.update_traces(textposition="outside")
+        fig.update_traces(
+            textposition="outside",
+            hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+        )
         fig.update_layout(
             height=max(250, 60 * len(plot_df) + 150),
             yaxis=dict(title=""),

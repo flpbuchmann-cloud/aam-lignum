@@ -153,8 +153,15 @@ def render_rf():
             pie_df["Label"] = pie_df.apply(
                 lambda r: f"{r['Indexador']} - {r['% RF']:.1f}% ({format_brl(r['Valor'])})", axis=1
             )
-            fig = px.pie(pie_df, values="Valor", names="Label", hole=0.4)
-            fig.update_traces(textposition="none")
+            pie_df["Valor Fmt"] = pie_df["Valor"].apply(format_brl)
+            fig = px.pie(
+                pie_df, values="Valor", names="Label", hole=0.4,
+                custom_data=["Valor Fmt", "% PL"],
+            )
+            fig.update_traces(
+                textposition="none",
+                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+            )
             fig.update_layout(height=400, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.3))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -165,13 +172,18 @@ def render_rf():
             bar_df["Label"] = bar_df.apply(
                 lambda r: f"{r['Emissor']} ({r['% PL']:.2f}% PL)", axis=1
             )
+            bar_df["Valor Fmt"] = bar_df["Valor"].apply(format_brl)
             fig = px.bar(
                 bar_df,
                 x="Valor",
                 y="Label",
                 orientation="h",
+                custom_data=["Valor Fmt", "% PL"],
             )
-            fig.update_traces(texttemplate="")
+            fig.update_traces(
+                texttemplate="",
+                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+            )
             fig.update_layout(
                 height=350,
                 yaxis=dict(autorange="reversed", title=""),
