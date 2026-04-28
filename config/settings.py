@@ -57,10 +57,11 @@ REGISTRY_COLUMNS = {
 # Google Sheets - Indicadores tab
 GSHEETS_INDICADORES_WORKSHEET = "Indicadores"
 
-# Google Sheets - App data tabs (clients, uploads, positions)
+# Google Sheets - App data tabs (clients, uploads, positions, targets)
 GSHEETS_CLIENTS_WORKSHEET = "app_clients"
 GSHEETS_UPLOADS_WORKSHEET = "app_uploads"
 GSHEETS_POSITIONS_WORKSHEET = "app_positions"
+GSHEETS_CONSOLIDATION_TARGETS_WORKSHEET = "app_consolidation_targets"
 
 # Fuzzy matching
 FUZZY_MATCH_THRESHOLD = 0.55

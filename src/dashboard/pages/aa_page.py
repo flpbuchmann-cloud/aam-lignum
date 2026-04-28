@@ -4,9 +4,12 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from src.dashboard.components.comparison_chart import render_realizado_vs_sugerido
 from src.dashboard.components.formatters import format_brl, format_pct
+from src.dashboard.components.persistent_state import load_targets, save_targets
 from src.matching.engine import MatchResult
 from src.views.aa_view import AAViewBuilder
+from src.views.ordering import disambiguate_micro_by_macro
 
 
 # CSS to center all data_editor cells except first column
@@ -83,14 +86,39 @@ def render_aa():
         return
 
     client_name = st.session_state.get("client_name", "Cliente")
+
+    st.title(f"Asset Allocation - {client_name}")
+
+    def _corretora_label(source: str | None) -> str:
+        label = (source or "").strip().title()
+        return label or "Sem fonte"
+
+    corretoras = sorted({_corretora_label(r.source) for r in results})
+
+    col_sel, col_metric = st.columns([1, 2])
+    with col_sel:
+        sel_corretora = st.selectbox(
+            "Instituição",
+            ["Todas"] + corretoras,
+            key="aa_corretora_filter",
+            help="Filtra toda a visualização para a instituição selecionada.",
+        )
+
+    if sel_corretora != "Todas":
+        results = [r for r in results if _corretora_label(r.source) == sel_corretora]
+        if not results:
+            st.warning(f"Nenhuma posição encontrada para {sel_corretora}.")
+            return
+
     builder = AAViewBuilder(results)
     positions = builder.build_positions_table()
 
     if positions.empty:
         return
 
-    st.title(f"Asset Allocation - {client_name}")
-    st.metric("Patrimonio Bruto Total", format_brl(builder.total_pl))
+    with col_metric:
+        label = "Patrimonio Bruto Total" if sel_corretora == "Todas" else f"Patrimonio em {sel_corretora}"
+        st.metric(label, format_brl(builder.total_pl))
     st.divider()
 
     # Inject centering CSS
@@ -147,10 +175,6 @@ def render_aa():
     # Parse edited values back to float
     sugerido_values = [_parse_br_number(v) for v in edited_pos["Valor Sugerido"].tolist()]
     st.session_state.pos_sugerido = sugerido_values
-
-    # Build numeric version for consolidation
-    pos_for_consol = positions[["Macro Classe", "Micro Classe"]].copy()
-    pos_for_consol["Valor Sugerido"] = sugerido_values
 
     # --- Add / Remove position ---
     col_add, col_del = st.columns(2)
@@ -228,120 +252,167 @@ def render_aa():
     st.divider()
 
     # =====================================================================
-    # 3. PIE CHARTS
+    # 3. CHARTS ROW: Macro pie | Micro pie | Alocação por Instituição
+    #    Three columns with equal width sharing a single row.
     # =====================================================================
     macro_df = builder.build_macro_consolidation()
     micro_df = builder.build_micro_consolidation()
+    corretora_df = builder.build_corretora_consolidation()
 
-    col_chart1, col_chart2 = st.columns(2)
+    col_macro_pie, col_micro_pie, col_inst = st.columns(3)
 
-    with col_chart1:
-        st.subheader("Macro Classe")
+    # Subheaders com altura fixa (min-height = 2 linhas) para alinhar os 3
+    # gráficos no topo da row. Sem isso, "Alocação por Instituição" quebra em
+    # 2 linhas em colunas estreitas e os outros 2 (1 linha cada) ficam
+    # visualmente acima.
+    PIE_HEADER = (
+        "<div style='min-height: 56px; display: flex; align-items: flex-end; "
+        "padding-bottom: 8px'>"
+        "<span style='font-size: 1.5rem; font-weight: 600; line-height: 1.3'>"
+        "{}</span></div>"
+    )
+
+    with col_macro_pie:
+        st.markdown(PIE_HEADER.format("Macro Classe"), unsafe_allow_html=True)
         if not macro_df.empty:
             pie_macro = macro_df.copy()
             pie_macro["Label"] = pie_macro.apply(
                 lambda r: f"{r['Macro Classe']} - {r['% Atual']:.2f}%", axis=1
             )
-            pie_macro["Valor Fmt"] = pie_macro["Valor"].apply(format_brl)
+            pie_macro["Hover"] = pie_macro.apply(
+                lambda r: (
+                    f"<b>{r['Macro Classe']}</b>"
+                    f"<br>━━━━━━━━━━━━━━━<br>"
+                    f"<b>Saldo Financeiro:</b> {format_brl(r['Valor'])}"
+                    f"<br><b>% do PL:</b> {r['% Atual']:.2f}%"
+                ),
+                axis=1,
+            )
             fig = px.pie(
                 pie_macro, values="Valor", names="Label", hole=0.4,
-                custom_data=["Valor Fmt", "% Atual"],
+                custom_data=["Hover"],
             )
             fig.update_traces(
                 textposition="none",
-                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
+                hovertemplate="%{customdata[0]}<extra></extra>",
             )
-            fig.update_layout(
-                showlegend=True, height=400,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.3),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col_chart2:
-        st.subheader("Micro Classe")
-        if not micro_df.empty:
-            pie_micro = micro_df.copy()
-            pie_micro["Label"] = pie_micro.apply(
-                lambda r: f"{r['Micro Classe']} - {r['% Atual']:.2f}%", axis=1
-            )
-            pie_micro["Valor Fmt"] = pie_micro["Valor"].apply(format_brl)
-            fig = px.pie(
-                pie_micro, values="Valor", names="Label", hole=0.4,
-                custom_data=["Valor Fmt", "% Atual"],
-            )
-            fig.update_traces(
-                textposition="none",
-                hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
-            )
-            n_items = len(pie_micro)
+            n_items = len(pie_macro)
             fig.update_layout(
                 showlegend=True,
-                height=400 + max(0, (n_items - 5) * 25),
+                height=420 + max(0, (n_items - 5) * 25),
                 legend=dict(
                     orientation="h", yanchor="top", y=-0.05,
                     xanchor="center", x=0.5, font=dict(size=11),
                 ),
                 margin=dict(b=max(80, n_items * 20)),
+                hoverlabel=dict(bgcolor="white", font_size=14, align="left",
+                                bordercolor="#333"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col_micro_pie:
+        st.markdown(PIE_HEADER.format("Micro Classe"), unsafe_allow_html=True)
+        if not micro_df.empty:
+            pie_micro = micro_df.copy()
+            pie_micro["Label"] = pie_micro.apply(
+                lambda r: f"{r['Micro Classe']} - {r['% Atual']:.2f}%", axis=1
+            )
+            pie_micro["Hover"] = pie_micro.apply(
+                lambda r: (
+                    f"<b>{r['Micro Classe']}</b>"
+                    f"<br>━━━━━━━━━━━━━━━<br>"
+                    f"<b>Saldo Financeiro:</b> {format_brl(r['Valor'])}"
+                    f"<br><b>% do PL:</b> {r['% Atual']:.2f}%"
+                ),
+                axis=1,
+            )
+            fig = px.pie(
+                pie_micro, values="Valor", names="Label", hole=0.4,
+                custom_data=["Hover"],
+            )
+            fig.update_traces(
+                textposition="none",
+                hovertemplate="%{customdata[0]}<extra></extra>",
+            )
+            n_items = len(pie_micro)
+            fig.update_layout(
+                showlegend=True,
+                height=420 + max(0, (n_items - 5) * 25),
+                legend=dict(
+                    orientation="h", yanchor="top", y=-0.05,
+                    xanchor="center", x=0.5, font=dict(size=11),
+                ),
+                margin=dict(b=max(80, n_items * 20)),
+                hoverlabel=dict(bgcolor="white", font_size=14, align="left",
+                                bordercolor="#333"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col_inst:
+        st.markdown(PIE_HEADER.format("Alocação por Instituição"), unsafe_allow_html=True)
+        if not corretora_df.empty:
+            pie_inst = corretora_df.copy()
+            pie_inst["Label"] = pie_inst.apply(
+                lambda r: f"{r['Corretora']} - {r['% PL']:.2f}%", axis=1
+            )
+            pie_inst["Hover"] = pie_inst.apply(
+                lambda r: (
+                    f"<b>{r['Corretora']}</b>"
+                    f"<br>━━━━━━━━━━━━━━━<br>"
+                    f"<b>Saldo Financeiro:</b> {format_brl(r['Valor'])}"
+                    f"<br><b>% do PL:</b> {r['% PL']:.2f}%"
+                ),
+                axis=1,
+            )
+            fig = px.pie(
+                pie_inst, values="Valor", names="Label", hole=0.4,
+                custom_data=["Hover"],
+            )
+            fig.update_traces(
+                textposition="none",
+                hovertemplate="%{customdata[0]}<extra></extra>",
+            )
+            n_items = len(pie_inst)
+            fig.update_layout(
+                showlegend=True,
+                height=420 + max(0, (n_items - 5) * 25),
+                legend=dict(
+                    orientation="h", yanchor="top", y=-0.05,
+                    xanchor="center", x=0.5, font=dict(size=11),
+                ),
+                margin=dict(b=max(80, n_items * 20)),
+                hoverlabel=dict(bgcolor="white", font_size=14, align="left",
+                                bordercolor="#333"),
             )
             st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
     # =====================================================================
-    # 3.5. ALOCACAO POR INSTITUICAO
+    # 4. CONSOLIDATION TABLES: Macro first, Micro below, each full-width.
+    #    % PL Sugerido is editable; Valor Sugerido and Diferença R$ update
+    #    automatically from the typed %.
     # =====================================================================
-    st.subheader("Alocação por Instituição")
-    corretora_df = builder.build_corretora_consolidation()
-    if not corretora_df.empty:
-        # Sort ascending for horizontal bar (larger on top)
-        plot_df = corretora_df.sort_values("Valor", ascending=True).copy()
-        plot_df["Label"] = plot_df.apply(
-            lambda r: f"{r['Corretora']} ({r['% PL']:.2f}% PL)", axis=1
-        )
-        plot_df["Valor Fmt"] = plot_df["Valor"].apply(format_brl)
-
-        fig = px.bar(
-            plot_df,
-            x="Valor",
-            y="Label",
-            orientation="h",
-            text="Valor Fmt",
-            custom_data=["Valor Fmt", "% PL"],
-        )
-        fig.update_traces(
-            textposition="outside",
-            hovertemplate="%{customdata[0]}<br>%{customdata[1]:.2f}% PL<extra></extra>",
-        )
-        fig.update_layout(
-            height=max(250, 60 * len(plot_df) + 150),
-            yaxis=dict(title=""),
-            xaxis=dict(title="Valor (R$)"),
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Macro Classe")
+    _render_consolidation_editor(macro_df, "Macro Classe", total_pl, "cons_macro_pct")
+    st.markdown("**Realizado vs. Sugerido — Macro Classe**")
+    render_realizado_vs_sugerido(
+        macro_df, "Macro Classe", "cons_macro_pct", currency_fn=format_brl,
+    )
 
     st.divider()
 
-    # =====================================================================
-    # 4. CONSOLIDATION TABLES
-    # =====================================================================
-    suggested_macro, suggested_micro = _build_suggested_consolidation(
-        pos_for_consol, edited_reco, total_pl
+    st.subheader("Micro Classe")
+    # Disambigua "Ações (Renda Variável)" vs "Ações (Internacional)" etc.
+    # quando a mesma Micro aparece em macros diferentes (sem isso o save
+    # do % PL Sugerido sobrescreve a chave duplicada e o usuário não vê
+    # o registro).
+    micro_df_uniq = disambiguate_micro_by_macro(micro_df)
+    _render_consolidation_editor(micro_df_uniq, "Micro Classe", total_pl, "cons_micro_pct")
+    st.markdown("**Realizado vs. Sugerido — Micro Classe**")
+    render_realizado_vs_sugerido(
+        micro_df_uniq, "Micro Classe", "cons_micro_pct", currency_fn=format_brl,
     )
-
-    col_cons1, col_cons2 = st.columns(2)
-
-    with col_cons1:
-        st.subheader("Macro Classe")
-        if not macro_df.empty:
-            cons_macro = _merge_consolidation(macro_df, suggested_macro, "Macro Classe", total_pl)
-            st.dataframe(cons_macro, use_container_width=True, hide_index=True)
-
-    with col_cons2:
-        st.subheader("Micro Classe")
-        if not micro_df.empty:
-            cons_micro = _merge_consolidation(micro_df, suggested_micro, "Micro Classe", total_pl)
-            st.dataframe(cons_micro, use_container_width=True, hide_index=True)
 
 
 def _render_add_position_form(client_id: int):
@@ -475,66 +546,104 @@ def _render_remove_position_form(client_id: int, positions_df: pd.DataFrame):
         st.rerun()
 
 
-def _build_suggested_consolidation(
-    pos_for_consol: pd.DataFrame, edited_reco: pd.DataFrame, total_pl: float
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build suggested consolidation from edited positions + recommendations."""
-    pos_macro = pos_for_consol.groupby("Macro Classe")["Valor Sugerido"].sum().reset_index()
-    pos_macro.columns = ["Classe", "Valor Sugerido"]
+def _render_consolidation_editor(
+    current_df: pd.DataFrame,
+    classe_col: str,
+    total_pl: float,
+    state_key: str,
+) -> None:
+    """Render a consolidation table with editable "% PL Sugerido".
 
-    pos_micro = pos_for_consol.groupby("Micro Classe")["Valor Sugerido"].sum().reset_index()
-    pos_micro.columns = ["Classe", "Valor Sugerido"]
+    Valor Sugerido and Diferença R$ are derived from the typed percentage
+    and the current Patrimônio Bruto (total_pl). Edited percentages are
+    persisted in st.session_state under `state_key` so they survive reruns.
 
-    if not edited_reco.empty:
-        reco_copy = edited_reco.copy()
-        reco_copy["_valor_num"] = reco_copy["Valor"].apply(_parse_br_number)
-        reco_clean = reco_copy[reco_copy["_valor_num"] > 0]
+    Input df must have columns: <classe_col>, "Valor", "% Atual".
+    """
+    if current_df.empty:
+        return
 
-        if not reco_clean.empty and "Macro Classe" in reco_clean.columns:
-            reco_macro = reco_clean.dropna(subset=["Macro Classe"]).groupby("Macro Classe")["_valor_num"].sum().reset_index()
-            reco_macro.columns = ["Classe", "Valor Sugerido"]
-            pos_macro = pd.concat([pos_macro, reco_macro]).groupby("Classe")["Valor Sugerido"].sum().reset_index()
+    # Carrega persistido em disco (sobrevive a F5 / restart / deploy).
+    stored: dict[str, float] = load_targets(state_key)
 
-            reco_micro = reco_clean.dropna(subset=["Micro Classe"]).groupby("Micro Classe")["_valor_num"].sum().reset_index()
-            reco_micro.columns = ["Classe", "Valor Sugerido"]
-            pos_micro = pd.concat([pos_micro, reco_micro]).groupby("Classe")["Valor Sugerido"].sum().reset_index()
+    rows = []
+    for _, r in current_df.iterrows():
+        classe = r[classe_col]
+        valor_atual = float(r["Valor"])
+        pct_atual = float(r["% Atual"])
+        pct_sugerido = float(stored.get(classe, 0.0))
+        valor_sugerido = pct_sugerido / 100.0 * total_pl
+        diferenca = valor_sugerido - valor_atual
+        rows.append({
+            classe_col: classe,
+            "Valor Atual": _fmt_valor(valor_atual),
+            "% PL Atual": _fmt_pct(pct_atual),
+            "% PL Sugerido": _fmt_pct(pct_sugerido),
+            "Valor Sugerido": _fmt_valor(valor_sugerido),
+            "Diferença R$": _fmt_signed_brl(diferenca),
+        })
+    display_df = pd.DataFrame(rows)
 
-    return pos_macro, pos_micro
-
-
-def _merge_consolidation(
-    current_df: pd.DataFrame, suggested_df: pd.DataFrame,
-    classe_col: str, total_pl: float
-) -> pd.DataFrame:
-    """Merge current and suggested consolidation into display table."""
-    current = current_df[[classe_col, "Valor", "% Atual"]].copy()
-    current.columns = [classe_col, "Valor Atual", "% PL Atual"]
-
-    suggested = suggested_df.copy()
-    suggested.columns = [classe_col, "Valor Sugerido"]
-
-    merged = current.merge(suggested, on=classe_col, how="outer").fillna(0)
-
-    if total_pl > 0:
-        merged["% PL Sugerido_num"] = (merged["Valor Sugerido"] / total_pl * 100).round(2)
-    else:
-        merged["% PL Sugerido_num"] = 0.0
-
-    merged["Diferenca_num"] = merged["Valor Sugerido"] - merged["Valor Atual"]
-    merged = merged.sort_values("Valor Atual", ascending=False).reset_index(drop=True)
-
-    # Format Brazilian
-    display = pd.DataFrame()
-    display[classe_col] = merged[classe_col]
-    display["Valor Atual"] = merged["Valor Atual"].apply(_fmt_valor)
-    display["% PL Atual"] = merged["% PL Atual"].apply(_fmt_pct)
-    display["Valor Sugerido"] = merged["Valor Sugerido"].apply(_fmt_valor)
-    display["% PL Sugerido"] = merged["% PL Sugerido_num"].apply(_fmt_pct)
-    display["Diferença R$"] = merged["Diferenca_num"].apply(
-        lambda x: f"+{_fmt_valor(x)}" if x > 0 else _fmt_valor(x)
+    edited = st.data_editor(
+        display_df,
+        column_config={
+            classe_col: st.column_config.TextColumn(classe_col, disabled=True, width="medium"),
+            "Valor Atual": st.column_config.TextColumn("Valor Atual", disabled=True),
+            "% PL Atual": st.column_config.TextColumn("% PL Atual", disabled=True),
+            "% PL Sugerido": st.column_config.TextColumn(
+                "% PL Sugerido",
+                help="Digite o percentual alvo (ex: 15, 15,50 ou 15,5%)",
+            ),
+            "Valor Sugerido": st.column_config.TextColumn("Valor Sugerido", disabled=True),
+            "Diferença R$": st.column_config.TextColumn("Diferença R$", disabled=True),
+        },
+        use_container_width=True,
+        hide_index=True,
+        key=f"{state_key}_editor",
     )
 
-    return display
+    # Parse edited % values back into session state. If parsing fails,
+    # keep the previously stored value so a typo doesn't clobber the cell.
+    new_stored: dict[str, float] = {}
+    for _, r in edited.iterrows():
+        classe = r[classe_col]
+        pct = _parse_pct_input(str(r.get("% PL Sugerido", "")))
+        new_stored[classe] = pct if pct is not None else stored.get(classe, 0.0)
+
+    # Mescla com targets antigos para classes que sumiram da view atual
+    # (ex.: trocou de cliente e voltou). Preserva targets ocultos.
+    merged = {**stored, **new_stored}
+
+    if merged != stored:
+        # Salva session_state + arquivo (write-through). Sobrevive F5/restart.
+        save_targets(state_key, merged)
+        editor_key = f"{state_key}_editor"
+        if editor_key in st.session_state:
+            del st.session_state[editor_key]
+        st.rerun()
+    else:
+        st.session_state[state_key] = merged
+
+
+def _parse_pct_input(s: str) -> float | None:
+    """Parse a percentage string: '15', '15,50', '15.5', '15%', '15,50%'."""
+    if s is None:
+        return 0.0
+    cleaned = s.strip().replace("%", "").strip()
+    if not cleaned:
+        return 0.0
+    cleaned = cleaned.replace(",", ".")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _fmt_signed_brl(v: float) -> str:
+    """Format BR value with explicit sign: '+1.234,56' or '-1.234,56'."""
+    if v is None or (isinstance(v, float) and pd.isna(v)) or abs(v) < 0.005:
+        return _fmt_valor(0.0)
+    return f"+{_fmt_valor(v)}" if v > 0 else _fmt_valor(v)
 
 
 def _fmt_valor(v):

@@ -7,6 +7,7 @@ from MatchResult data.
 import pandas as pd
 
 from src.matching.engine import MatchResult
+from src.views.ordering import macro_sort_key
 
 
 class AAViewBuilder:
@@ -75,7 +76,10 @@ class AAViewBuilder:
             lambda x: targets.get(x, 0.0)
         )
         grouped["Diferenca"] = (grouped["% Atual"] - grouped["% Target"]).round(2)
-        grouped = grouped.sort_values("Valor", ascending=False).reset_index(drop=True)
+        # Ordem canônica (PADROES.md §6): Caixa → DI/Cash → RF → RV → Mm →
+        # Internacional → Fundo Exclusivo → Previdência → Alternativos.
+        grouped["_sort"] = grouped["Macro Classe"].apply(macro_sort_key)
+        grouped = grouped.sort_values("_sort").drop(columns="_sort").reset_index(drop=True)
         return grouped
 
     def build_corretora_consolidation(self) -> pd.DataFrame:
@@ -97,14 +101,25 @@ class AAViewBuilder:
         """Build consolidation by Micro Classe.
 
         Returns DataFrame with columns:
-            Micro Classe, Valor, % Atual
+            Macro Classe, Micro Classe, Valor, % Atual
+
+        Ordenado pela ordem canônica de Macro (PADROES.md §6) e, dentro de
+        cada macro, por Valor decrescente.
         """
         positions = self.build_positions_table()
         if positions.empty:
             return pd.DataFrame()
 
-        grouped = positions.groupby("Micro Classe")["Valor"].sum().reset_index()
-        grouped.columns = ["Micro Classe", "Valor"]
+        grouped = (
+            positions.groupby(["Macro Classe", "Micro Classe"])["Valor"]
+            .sum()
+            .reset_index()
+        )
         grouped["% Atual"] = (grouped["Valor"] / self.total_pl * 100).round(2)
-        grouped = grouped.sort_values("Valor", ascending=False).reset_index(drop=True)
+        grouped["_sort"] = grouped["Macro Classe"].apply(macro_sort_key)
+        grouped = (
+            grouped.sort_values(["_sort", "Valor"], ascending=[True, False])
+            .drop(columns="_sort")
+            .reset_index(drop=True)
+        )
         return grouped
